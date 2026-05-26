@@ -61,22 +61,45 @@ function extractCifraClubContent(html) {
 
 async function searchCifraClub(query) {
   const encoded = encodeURIComponent(query);
-  const searchUrl = `https://www.cifraclub.com.br/search/?q=${encoded}&type=cifra`;
 
-  const searchRes = await fetchUrl(searchUrl);
-  if (searchRes.status !== 200) throw new Error("Cifra Club search failed");
+  // Use Cifra Club's autocomplete/suggest API — returns JSON with direct URLs
+  const suggestUrl = `https://www.cifraclub.com.br/api/suggest/?q=${encoded}&limit=5`;
+  let cifraUrl = null;
 
-  // Extract first result URL — multiple fallbacks (Cifra Club changes HTML often)
-  const linkMatch =
-    searchRes.body.match(/href="(\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"[^>]*class="[^"]*search-result[^"]*"/i) ||
-    searchRes.body.match(/href="(https:\/\/www\.cifraclub\.com\.br\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"/i) ||
-    searchRes.body.match(/"url":"(https:\/\/www\.cifraclub\.com\.br\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"/i) ||
-    searchRes.body.match(/href="(\/[a-z0-9\-]{3,}\/[a-z0-9\-]{3,}\/)"/i);
+  try {
+    const suggestRes = await fetchUrl(suggestUrl);
+    if (suggestRes.status === 200) {
+      const json = JSON.parse(suggestRes.body);
+      // Response is array of {url, name, artist, ...}
+      const first = Array.isArray(json) ? json[0] : (json.data && json.data[0]);
+      if (first && first.url) {
+        cifraUrl = first.url.startsWith('http')
+          ? first.url
+          : `https://www.cifraclub.com.br${first.url}`;
+      }
+    }
+  } catch(e) {
+    console.log('Suggest API failed:', e.message);
+  }
 
-  if (!linkMatch) return null;
+  // Fallback: scrape search page
+  if (!cifraUrl) {
+    const searchUrl = `https://www.cifraclub.com.br/search/?q=${encoded}&type=cifra`;
+    const searchRes = await fetchUrl(searchUrl);
+    if (searchRes.status !== 200) throw new Error("Cifra Club search failed");
 
-  const rawUrl = linkMatch[1];
-  const cifraUrl = rawUrl.startsWith('http') ? rawUrl : `https://www.cifraclub.com.br${rawUrl}`;
+    // Try to find URL in JSON-LD structured data first
+    const jsonLdMatch = searchRes.body.match(/<script type="application\/ld\+json">[\s\S]*?"url"\s*:\s*"(https:\/\/www\.cifraclub\.com\.br\/[^"]+\/[^"]+\/)"[\s\S]*?<\/script>/i);
+    // Then try href patterns
+    const hrefMatch =
+      searchRes.body.match(/href="(https?:\/\/(?:www\.)?cifraclub\.com\.br\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"/i) ||
+      searchRes.body.match(/href="(\/[a-z0-9\-]{3,}\/[a-z0-9\-]{3,}\/)"/i);
+
+    const raw = (jsonLdMatch && jsonLdMatch[1]) || (hrefMatch && hrefMatch[1]);
+    if (!raw) return null;
+    cifraUrl = raw.startsWith('http') ? raw : `https://www.cifraclub.com.br${raw}`;
+  }
+
   const cifraRes = await fetchUrl(cifraUrl);
   if (cifraRes.status !== 200) return null;
 
