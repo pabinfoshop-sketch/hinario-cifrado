@@ -66,13 +66,17 @@ async function searchCifraClub(query) {
   const searchRes = await fetchUrl(searchUrl);
   if (searchRes.status !== 200) throw new Error("Cifra Club search failed");
 
-  // Extract first result URL
-  const linkMatch = searchRes.body.match(/href="(\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"[^>]*class="[^"]*search-result[^"]*"/i)
-    || searchRes.body.match(/href="(\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"[^>]*>/i);
+  // Extract first result URL — multiple fallbacks (Cifra Club changes HTML often)
+  const linkMatch =
+    searchRes.body.match(/href="(\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"[^>]*class="[^"]*search-result[^"]*"/i) ||
+    searchRes.body.match(/href="(https:\/\/www\.cifraclub\.com\.br\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"/i) ||
+    searchRes.body.match(/"url":"(https:\/\/www\.cifraclub\.com\.br\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"/i) ||
+    searchRes.body.match(/href="(\/[a-z0-9\-]{3,}\/[a-z0-9\-]{3,}\/)"/i);
 
   if (!linkMatch) return null;
 
-  const cifraUrl = `https://www.cifraclub.com.br${linkMatch[1]}`;
+  const rawUrl = linkMatch[1];
+  const cifraUrl = rawUrl.startsWith('http') ? rawUrl : `https://www.cifraclub.com.br${rawUrl}`;
   const cifraRes = await fetchUrl(cifraUrl);
   if (cifraRes.status !== 200) return null;
 
