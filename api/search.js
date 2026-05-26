@@ -197,15 +197,38 @@ ${cifraData.cifra.substring(0, 3000)}
 Por favor, formate esta cifra de forma limpa e organizada, mantendo os acordes entre colchetes no formato [Acorde] acima de cada trecho da letra correspondente. Corrija qualquer problema de formatação. Responda APENAS com a cifra formatada, começando com o nome da música e artista.`;
     } else {
       // Fallback: ask Groq from memory
-      prompt = `Você é um assistente especializado em cifras de músicas gospel, hinos e louvores brasileiros.
+      prompt = `Você é um especialista em cifras de músicas gospel, hinos e louvores brasileiros.
 
-O usuário quer a cifra de: "${query}"
+O usuário quer a cifra COMPLETA de: "${query}"
 
-Forneça a cifra completa com acordes entre colchetes no formato [Acorde] posicionados acima da letra correspondente. Inclua todas as partes (intro, verso, refrão, ponte, etc).
+REGRAS OBRIGATÓRIAS:
+1. Escreva o nome da música e artista na primeira linha
+2. Inclua TODAS as partes: [Intro], [Verso 1], [Pré-Refrão], [Refrão], [Verso 2], [Ponte], [Final] etc
+3. Cada acorde deve aparecer entre colchetes: [G] [Em] [C] [D]
+4. Coloque os acordes NA LINHA ACIMA da letra correspondente
+5. Inclua a letra COMPLETA da música sob os acordes
+6. NÃO omita nenhuma parte da música
+7. Responda APENAS com a cifra, sem explicações
 
-Se não souber a cifra exata, forneça uma versão aproximada com os acordes mais prováveis para o estilo da música.
+Exemplo de formato correto:
+Música - Artista
 
-Responda APENAS com a cifra, começando com o nome da música e artista.`;
+[Intro]
+[G] [Em] [C] [D]
+
+[Verso 1]
+[G]          [Em]
+Primeira linha da letra
+[C]          [D]
+Segunda linha da letra
+
+[Refrão]
+[G]    [Em]
+Letra do refrão
+[C]    [D]
+Continua o refrão
+
+Agora forneça a cifra COMPLETA de "${query}":`;
     }
 
     const result = await callGroq(prompt);
