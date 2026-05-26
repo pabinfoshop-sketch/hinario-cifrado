@@ -441,17 +441,7 @@ body { font-family:'Crimson Text',Georgia,serif; background:var(--sidebar-bg); c
 
       <!-- SEARCH TAB -->
       <div id="pane-search">
-        <!-- API Key section -->
-        <div id="api-key-section">
-          <div class="api-key-note">
-            🤖 A busca usa a <strong>API do Claude (Anthropic)</strong>. Cole sua chave abaixo para ativar a busca inteligente de cifras.
-            <br>Obtenha em <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>.
-          </div>
-          <div class="api-key-wrap">
-            <input class="api-key-input" id="api-key-input" type="password" placeholder="sk-ant-api...">
-            <button class="api-key-save" onclick="saveApiKey()">Salvar</button>
-          </div>
-        </div>
+
         <div class="msearch-row">
           <input class="msearch" id="msearch-in" placeholder="Ex: Alma Cansada, Trem das Doze...">
           <button class="msearch-btn" id="msearch-btn" onclick="doSearch()">Buscar</button>
@@ -548,7 +538,7 @@ let viewMode = localStorage.getItem('hinario_view') || '1';
 let sortMode = localStorage.getItem('hinario_sort') || 'name';
 let _confirmResolve = null;
 let autoScrollOn = false, autoScrollInterval = null;
-let apiKey = localStorage.getItem('hinario_api_key') || '';
+
 
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(repertorio)); }
 function saveApiKey() {
@@ -989,7 +979,6 @@ function openModal() {
   document.getElementById('tab-search').classList.add('active');
   document.getElementById('tab-manual').classList.remove('active');
   document.getElementById('modal-bg').classList.remove('hidden');
-  updateApiKeySection();
   setTimeout(() => document.getElementById('msearch-in').focus(), 100);
 }
 function closeModal() {
@@ -1012,8 +1001,7 @@ async function doSearch() {
   const res = document.getElementById('search-results');
 
   if (!apiKey) {
-    updateApiKeySection();
-    res.innerHTML = `<div class="status-msg">⚠️ Configure sua chave da API Claude acima para ativar a busca.</div>`;
+      res.innerHTML = `<div class="status-msg">⚠️ Configure sua chave da API Claude acima para ativar a busca.</div>`;
     return;
   }
 
@@ -1228,7 +1216,6 @@ renderList();
 if (repertorio.length === 0) showWelcome();
 else selectSong(sortedRepertorio(repertorio)[0]);
 
-updateApiKeySection();
 </script>
 </body>
 </html>
