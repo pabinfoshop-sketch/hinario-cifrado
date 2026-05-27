@@ -27,51 +27,31 @@ function fetchUrl(url, options = {}) {
   });
 }
 
-// ─── VAGALUME ────────────────────────────────────────────────────────────────
-// Vagalume has a free API for lyrics search
-async function searchVagalume(query) {
-  const encoded = encodeURIComponent(query);
-
-  // Step 1: search for the song
-  const searchUrl = `https://api.vagalume.com.br/search.php?q=${encoded}&limit=1`;
-  const searchRes = await fetchUrl(searchUrl, { headers: { Accept: "application/json" } });
-  if (searchRes.status !== 200) throw new Error("Vagalume search failed: " + searchRes.status);
-
-  const searchData = JSON.parse(searchRes.body);
-  if (!searchData.response?.docs?.length) return null;
-
-  const doc = searchData.response.docs[0];
-  const songId = doc.id;
-  const songName = doc.name;
-  const artistName = doc.art?.name || "";
-
-  // Step 2: get full lyrics
-  const lyricsUrl = `https://api.vagalume.com.br/search.php?musid=${songId}&extra=rel`;
-  const lyricsRes = await fetchUrl(lyricsUrl, { headers: { Accept: "application/json" } });
-  if (lyricsRes.status !== 200) throw new Error("Vagalume lyrics failed");
-
-  const lyricsData = JSON.parse(lyricsRes.body);
-  const lyrics = lyricsData.mus?.[0]?.text;
-  if (!lyrics) return null;
-
-  return { title: songName, artist: artistName, lyrics, source: "vagalume" };
+function toSlug(text) {
+  return text.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s\-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .trim();
 }
 
-// ─── LETRAS.MUS.BR ───────────────────────────────────────────────────────────
-async function searchLetras(query) {
+// ─── CIFRAS.COM.BR ────────────────────────────────────────────────────────────
+async function searchCifras(query) {
   const encoded = encodeURIComponent(query);
-  const searchUrl = `https://letras.mus.br/pesquisar/?q=${encoded}`;
+  const searchUrl = `https://www.cifras.com.br/busca/?q=${encoded}`;
   const searchRes = await fetchUrl(searchUrl);
-  if (searchRes.status !== 200) throw new Error("Letras search failed: " + searchRes.status);
+  if (searchRes.status !== 200) throw new Error("Cifras search failed: " + searchRes.status);
 
-  // Extract first result link
   const html = searchRes.body;
-  const linkMatch = html.match(/href="(\/[a-z0-9\-]+\/[a-z0-9\-]+\/)"/i);
+
+  // Extract first cifra result link like /cifra/artista/musica
+  const linkMatch = html.match(/href="(\/cifra\/[a-z0-9\-]+\/[a-z0-9\-]+)"/i);
   if (!linkMatch) return null;
 
-  const songUrl = `https://letras.mus.br${linkMatch[1]}`;
+  const songUrl = `https://www.cifras.com.br${linkMatch[1]}`;
   const songRes = await fetchUrl(songUrl);
-  if (songRes.status !== 200) throw new Error("Letras song page failed");
+  if (songRes.status !== 200) throw new Error("Cifras song failed: " + songRes.status);
 
   const songHtml = songRes.body;
 
@@ -83,51 +63,97 @@ async function searchLetras(query) {
   const artistMatch = songHtml.match(/<h2[^>]*>([^<]+)<\/h2>/i);
   const artist = artistMatch ? artistMatch[1].trim() : "";
 
-  // Extract lyrics from cnt-letra div
-  const lyricsMatch = songHtml.match(/class="cnt-letra[^"]*"[^>]*>([\s\S]*?)<\/article>/i)
-    || songHtml.match(/id="letra-cnt"[^>]*>([\s\S]*?)<\/div>/i);
+  // Extract cifra content — cifras.com.br uses a div with id="cifra_cnt" or class cifra
+  let cifraRaw = "";
 
-  if (!lyricsMatch) return null;
+  // Method 1: cifra_cnt div
+  const cntMatch = songHtml.match(/id="cifra_cnt"[^>]*>([\s\S]*?)<\/div>/i)
+    || songHtml.match(/class="[^"]*cifra[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
 
-  const lyrics = lyricsMatch[1]
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<p[^>]*>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  if (cntMatch) {
+    cifraRaw = cntMatch[1]
+      .replace(/<b>([^<]+)<\/b>/g, "[$1]")
+      .replace(/<span[^>]*chord[^>]*>([^<]+)<\/span>/gi, "[$1]")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<p[^>]*>/gi, "\n").replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
+      .replace(/\n{3,}/g, "\n\n").trim();
+  }
 
-  if (lyrics.length < 50) return null;
-  return { title, artist, lyrics, source: "letras", url: songUrl };
+  // Method 2: pre tags
+  if (!cifraRaw || cifraRaw.length < 50) {
+    const preMatches = songHtml.match(/<pre[^>]*>([\s\S]*?)<\/pre>/gi) || [];
+    if (preMatches.length) {
+      cifraRaw = preMatches.map(block =>
+        block
+          .replace(/<b>([^<]+)<\/b>/g, "[$1]")
+          .replace(/<span[^>]*>([^<]+)<\/span>/gi, "$1")
+          .replace(/<[^>]+>/g, "")
+          .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
+      ).join("\n\n").trim();
+    }
+  }
+
+  if (!cifraRaw || cifraRaw.length < 50) return null;
+  return { title, artist, cifra: cifraRaw, source: "cifras", url: songUrl };
 }
 
-// ─── GROQ — generate chords for known lyrics ─────────────────────────────────
-async function generateChordsWithGroq(songInfo) {
+// ─── VAGALUME ─────────────────────────────────────────────────────────────────
+async function searchVagalume(query) {
+  // Use the search API
+  const encoded = encodeURIComponent(query);
+  const apiKey = "timeoutLyrics";  // public key
+  const searchUrl = `https://api.vagalume.com.br/search.php?q=${encoded}&limit=3`;
+
+  const searchRes = await fetchUrl(searchUrl, { headers: { Accept: "application/json" } });
+  if (searchRes.status !== 200) throw new Error("Vagalume search failed");
+
+  let searchData;
+  try { searchData = JSON.parse(searchRes.body); } catch { throw new Error("Vagalume parse error"); }
+
+  const docs = searchData.response?.docs;
+  if (!docs?.length) return null;
+
+  const doc = docs[0];
+  const songId = doc.id;
+  const songName = doc.name;
+  const artistName = doc.art?.name || "";
+  const songUrl = doc.url || `https://www.vagalume.com.br/${toSlug(artistName)}/${toSlug(songName)}.html`;
+
+  // Get full lyrics
+  const lyricsUrl = `https://api.vagalume.com.br/search.php?musid=${songId}`;
+  const lyricsRes = await fetchUrl(lyricsUrl, { headers: { Accept: "application/json" } });
+  if (lyricsRes.status !== 200) throw new Error("Vagalume lyrics failed");
+
+  const lyricsData = JSON.parse(lyricsRes.body);
+  const lyrics = lyricsData.mus?.[0]?.text;
+  if (!lyrics) return null;
+
+  return { title: songName, artist: artistName, lyrics, source: "vagalume", url: songUrl };
+}
+
+// ─── GROQ — add chords to real lyrics ────────────────────────────────────────
+async function addChordsWithGroq(songInfo) {
   const body = JSON.stringify({
     model: "llama-3.3-70b-versatile",
     messages: [
       {
         role: "system",
-        content: `Você é um especialista em cifras de músicas gospel e louvores brasileiros.
-Dado o título, artista e letra de uma música, adicione os acordes corretos.
-REGRAS:
-- Acordes entre colchetes: [G] [Em] [C] [D] [Am] [F] [Bb] etc
-- Acordes ficam NA LINHA ACIMA da sílaba correspondente da letra
-- Identifique e rotule as seções: [Intro], [Verso 1], [Refrão], [Ponte] etc
-- Use os acordes REAIS da música, não invente
-- Responda SOMENTE com a cifra formatada, sem explicações`
+        content: `Você é especialista em cifras de músicas gospel brasileiras.
+Dado o título, artista e letra, adicione os ACORDES CORRETOS e REAIS da música.
+FORMATO OBRIGATÓRIO:
+- Primeira linha: "Título - Artista"
+- Seções entre colchetes: [Intro], [Verso 1], [Refrão], [Ponte] etc
+- Acordes ACIMA da letra correspondente, entre colchetes: [G] [Em] [C] [D]
+- Inclua a letra COMPLETA
+- Responda SOMENTE a cifra, sem explicações`
       },
       {
         role: "user",
-        content: `Adicione os acordes corretos nesta música:
-
-Título: ${songInfo.title}
-Artista: ${songInfo.artist}
-
-LETRA:
-${songInfo.lyrics.substring(0, 2500)}`
+        content: `Adicione os acordes corretos desta música:\n\nTítulo: ${songInfo.title}\nArtista: ${songInfo.artist}\n\nLETRA:\n${songInfo.lyrics.substring(0, 2500)}`
       }
     ],
     max_tokens: 3000,
@@ -149,10 +175,8 @@ ${songInfo.lyrics.substring(0, 2500)}`
       let data = "";
       res.on("data", c => data += c);
       res.on("end", () => {
-        try {
-          const json = JSON.parse(data);
-          resolve(json.choices?.[0]?.message?.content || "");
-        } catch { reject(new Error("Groq parse error")); }
+        try { resolve(JSON.parse(data).choices?.[0]?.message?.content || ""); }
+        catch { reject(new Error("Groq parse error")); }
       });
     });
     req.on("error", reject);
@@ -162,7 +186,51 @@ ${songInfo.lyrics.substring(0, 2500)}`
   });
 }
 
-// ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
+// ─── GROQ — pure fallback ─────────────────────────────────────────────────────
+async function groqFallback(query) {
+  const body = JSON.stringify({
+    model: "llama-3.3-70b-versatile",
+    messages: [
+      {
+        role: "system",
+        content: `Você é especialista em cifras de músicas gospel e hinos brasileiros.
+Se souber a cifra completa da música, forneça com letra e acordes.
+Se NÃO souber com certeza, responda apenas: MÚSICA NÃO ENCONTRADA
+NUNCA invente acordes ou letra.`
+      },
+      { role: "user", content: `Cifra completa de: "${query}"` }
+    ],
+    max_tokens: 3000,
+    temperature: 0.1,
+  });
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: "api.groq.com",
+      path: "/openai/v1/chat/completions",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+        "Content-Length": Buffer.byteLength(body),
+      },
+      timeout: 20000,
+    }, (res) => {
+      let data = "";
+      res.on("data", c => data += c);
+      res.on("end", () => {
+        try { resolve(JSON.parse(data).choices?.[0]?.message?.content || ""); }
+        catch { reject(new Error("Groq parse error")); }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("Groq timeout")); });
+    req.write(body);
+    req.end();
+  });
+}
+
+// ─── MAIN ──────────────────────────────────────────────────────────────────────
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -179,90 +247,49 @@ module.exports = async (req, res) => {
   if (!process.env.GROQ_API_KEY) return res.status(500).json({ error: "GROQ_API_KEY não configurada" });
 
   try {
-    let songInfo = null;
-    let sourceLabel = "ia";
+    let result = null;
+    let source = "ia";
+    let url = null;
 
-    // 1. Try Vagalume first
+    // 1. Try cifras.com.br (has actual chords)
     try {
-      songInfo = await searchVagalume(query);
-      if (songInfo) sourceLabel = "vagalume";
-      console.log("Vagalume result:", songInfo ? songInfo.title : "null");
-    } catch (e) {
-      console.log("Vagalume error:", e.message);
-    }
+      const cifrasData = await searchCifras(query);
+      if (cifrasData) {
+        result = `${cifrasData.title} - ${cifrasData.artist}\n\n${cifrasData.cifra}`;
+        source = "cifras";
+        url = cifrasData.url;
+        console.log("Found on cifras.com.br:", cifrasData.title);
+      }
+    } catch (e) { console.log("Cifras error:", e.message); }
 
-    // 2. Fallback to Letras.mus.br
-    if (!songInfo) {
+    // 2. Try Vagalume (has lyrics) + Groq (adds chords)
+    if (!result) {
       try {
-        songInfo = await searchLetras(query);
-        if (songInfo) sourceLabel = "letras";
-        console.log("Letras result:", songInfo ? songInfo.title : "null");
-      } catch (e) {
-        console.log("Letras error:", e.message);
-      }
+        const vagalumeData = await searchVagalume(query);
+        if (vagalumeData) {
+          console.log("Found on Vagalume:", vagalumeData.title);
+          const withChords = await addChordsWithGroq(vagalumeData);
+          if (withChords && withChords.length > 50) {
+            result = withChords;
+            source = "vagalume";
+            url = vagalumeData.url;
+          }
+        }
+      } catch (e) { console.log("Vagalume error:", e.message); }
     }
 
-    let result;
-
-    if (songInfo) {
-      // Found real lyrics — ask Groq to add chords
-      result = await generateChordsWithGroq(songInfo);
-      if (!result || result.length < 50) {
-        // Groq failed to add chords — return lyrics only with placeholder chords
-        result = `${songInfo.title} - ${songInfo.artist}\n\n[Acordes não disponíveis — letra encontrada em ${sourceLabel}]\n\n${songInfo.lyrics}`;
-      }
-    } else {
-      // No lyrics found anywhere — pure IA fallback
-      sourceLabel = "ia";
-      const groqBody = JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          {
-            role: "system",
-            content: `Você é um especialista em cifras de músicas gospel e louvores brasileiros. 
-Se souber a cifra da música pedida, forneça completa com letra e acordes formatados.
-Se NÃO souber com certeza, responda exatamente: MÚSICA NÃO ENCONTRADA
-NUNCA invente acordes ou letra de músicas que não conhece.`
-          },
-          { role: "user", content: `Cifra completa de: "${query}"` }
-        ],
-        max_tokens: 3000,
-        temperature: 0.1,
-      });
-
-      const fallbackResult = await new Promise((resolve, reject) => {
-        const req2 = https.request({
-          hostname: "api.groq.com",
-          path: "/openai/v1/chat/completions",
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
-            "Content-Length": Buffer.byteLength(groqBody),
-          },
-          timeout: 20000,
-        }, (r) => {
-          let d = "";
-          r.on("data", c => d += c);
-          r.on("end", () => {
-            try { resolve(JSON.parse(d).choices?.[0]?.message?.content || ""); }
-            catch { reject(new Error("parse error")); }
-          });
-        });
-        req2.on("error", reject);
-        req2.on("timeout", () => { req2.destroy(); reject(new Error("timeout")); });
-        req2.write(groqBody);
-        req2.end();
-      });
-
-      if (fallbackResult.includes("MÚSICA NÃO ENCONTRADA")) {
+    // 3. Pure Groq fallback
+    if (!result) {
+      const groqResult = await groqFallback(query);
+      if (groqResult.includes("MÚSICA NÃO ENCONTRADA")) {
         result = `"${query}" não foi encontrada.\n\nUse "Digitar Manual" para inserir a cifra manualmente.`;
       } else {
-        result = fallbackResult;
+        result = groqResult;
       }
+      source = "ia";
     }
 
-    return res.status(200).json({ result, source: sourceLabel, url: songInfo?.url || null });
+    return res.status(200).json({ result, source, url });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message });
